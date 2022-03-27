@@ -6,6 +6,7 @@
 #include "memlayout.h"
 #include "mmu.h"
 #include "proc.h"
+#include "pstat.h"
 
 extern int readcount_global;
 
@@ -93,7 +94,7 @@ sys_uptime(void)
 }
 
 
-int
+int 
 sys_getreadcount(void)
 {
   int n;
@@ -104,3 +105,48 @@ sys_getreadcount(void)
   else
     return readcount_global;  
 }
+
+int
+sys_settickets(void)
+{
+  int n;
+  if(argint(0, &n) < 0)
+    return -1;
+  if(n < 1)
+    return -1;
+  struct proc *curproc = myproc();
+ // cprintf("tickets before settickets: %d\n", curproc->tickets);
+  acquire(&ptable.lock); 
+  curproc->tickets = n;
+  release(&ptable.lock);
+  //acquiring the lock is important here because getpinfo can access this while settickets is modifying tickets.
+ //scheduler acquires lock before totalling tickets for that round of scheduling. so settickets cannot interfere with that by changing tickets between te=he round.
+ // cprintf("tickets after settickets: %d\n", curproc->tickets);
+  return 0;  
+}
+
+int
+sys_getpinfo(void)
+{
+  struct pstat *procstat;
+  struct proc *proc;
+
+  if(argint(0, (int *)&procstat) < 0)//change this to argptr.
+    return -1;
+  
+
+  acquire(&ptable.lock);
+  for(proc = ptable.proc; proc < &ptable.proc[NPROC]; proc++){
+    int index = proc - ptable.proc;
+    if(proc->state != UNUSED){
+      procstat->inuse[index] = proc->inuse;
+      procstat->tickets[index] = proc->tickets;
+      procstat->pid[index] = proc->pid;
+      procstat->ticks[index] = proc->ticks; 
+    }
+    }
+  release(&ptable.lock);
+  return 0;
+}
+
+

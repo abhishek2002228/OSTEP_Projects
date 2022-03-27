@@ -6,12 +6,15 @@
 #include "x86.h"
 #include "proc.h"
 #include "spinlock.h"
+#include "rand.h"
 
-struct {
+/*struct public_ptable{
   struct spinlock lock;
   struct proc proc[NPROC];
 } ptable;
+*/
 
+struct public_ptable ptable = {0}; //initialize everything in ptable to 0.
 static struct proc *initproc;
 
 int nextpid = 1;
@@ -89,6 +92,8 @@ found:
   p->state = EMBRYO;
   p->pid = nextpid++;
   p->readcount = 0;
+  p->tickets = 1;
+  p->ticks = 0;
   release(&ptable.lock);
 
   // Allocate kernel stack.
@@ -138,6 +143,8 @@ userinit(void)
   p->tf->eflags = FL_IF;
   p->tf->esp = PGSIZE;
   p->tf->eip = 0;  // beginning of initcode.S
+  p->tickets = 1;
+  p->ticks = 0;
 
   safestrcpy(p->name, "initcode", sizeof(p->name));
   p->cwd = namei("/");
@@ -199,6 +206,10 @@ fork(void)
   np->sz = curproc->sz;
   np->parent = curproc;
   *np->tf = *curproc->tf;
+
+  //copy parent tickets to child
+  np->tickets = curproc->tickets;
+  np->ticks = 0;
 
   // Clear %eax so that fork returns 0 in the child.
   np->tf->eax = 0;
@@ -329,26 +340,52 @@ scheduler(void)
   for(;;){
     // Enable interrupts on this processor.
     sti();
+    unsigned int totaltickets = 0;
+    unsigned int counter = 0;
+    acquire(&ptable.lock);
+    
+    //calculate the total tickets available
+    //important to calculate this after acquiring lock.
+    for(int i = 0; i < NPROC; i++){
+      if(ptable.proc[i].state == RUNNABLE){
+        totaltickets = totaltickets + ptable.proc[i].tickets;
+      }
+    }
+
+    //cprintf("The total tickets for this round : %d\n", totaltickets);
+
+    unsigned int winner = next_random() % (totaltickets + 1);
+
+    //cprintf("The winner ticket for this round : %d\n", winner);
 
     // Loop over process table looking for process to run.
-    acquire(&ptable.lock);
     for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
       if(p->state != RUNNABLE)
         continue;
-
+      counter = counter + p->tickets;
+      if(counter < winner){
+        continue;
+      }
+      //p is now the winner of the lottery
       // Switch to chosen process.  It is the process's job
       // to release ptable.lock and then reacquire it
       // before jumping back to us.
-      c->proc = p;
+      c->proc = p;  //next process to run is chosen here.
       switchuvm(p);
       p->state = RUNNING;
-
+      p->inuse = 1; //process in use after swtch
+      const int temp = ticks;//this tick used by p.
+      cprintf("about to run: %s [pid %d][tickets %d][ticks %d]\n", p->name, p->pid, p->tickets, p->ticks);
       swtch(&(c->scheduler), p->context);
+      //cprintf("switched to %s [pid: %d][ticket count: %d]\n", p->name, p->pid, p->tickets);
+      p->inuse = 0;
+      p->ticks += ticks - temp;
       switchkvm();
 
       // Process is done running for now.
       // It should have changed its p->state before coming back.
       c->proc = 0;
+      break; //this is important to avoid round robin 
     }
     release(&ptable.lock);
 

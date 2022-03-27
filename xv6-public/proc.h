@@ -1,3 +1,5 @@
+#include "spinlock.h"
+
 // Per-CPU state
 struct cpu {
   uchar apicid;                // Local APIC ID
@@ -50,6 +52,9 @@ struct proc {
   struct inode *cwd;           // Current directory
   char name[16];               // Process name (debugging)
   int readcount;
+  int tickets;
+  int ticks;
+  int inuse;
 };
 
 // Process memory is laid out contiguously, low addresses first:
@@ -57,3 +62,11 @@ struct proc {
 //   original data and bss
 //   fixed-size stack
 //   expandable heap
+//
+
+struct public_ptable{
+  struct spinlock lock;
+  struct proc proc[NPROC];
+};
+
+extern struct public_ptable ptable;
